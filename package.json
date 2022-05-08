@@ -1,0 +1,19 @@
+{
+    "name": "invert-powerpoints",
+    "version": "1.0.0",
+    "description": "",
+    "main": "index.js",
+    "scripts": {
+        "start": "vite"
+    },
+    "keywords": [],
+    "author": "Joehoel",
+    "license": "ISC",
+    "dependencies": {
+        "vite": "^2.8.0"
+    },
+    "devDependencies": {
+        "@types/wicg-file-system-access": "^2020.9.5",
+        "typescript": "^4.5.5"
+    }
+}
