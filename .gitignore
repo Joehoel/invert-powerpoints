@@ -1,6 +1,7 @@
 input/**/*
 output/**/*
 typings/
+.DS_Store
 
 # Logs
 logs
