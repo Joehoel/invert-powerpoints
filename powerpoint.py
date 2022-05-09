@@ -1,62 +1,88 @@
-import os
+from os import rename, path, rmdir, listdir, mkdir
 from glob import glob
 from shutil import copy, move
 from zipfile import BadZipFile, ZipFile
 
 from PIL import Image, ImageOps
-from pptx import Presentation
+
 from pptx.dml.color import RGBColor
-from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE, MSO_SHAPE_TYPE
+from pptx import Presentation, PresentationPart
+
+from tqdm import tqdm
 
 
-def change_extension(path: str, ext: str):
-    print(f"✏️ Changing extension from file: {path} to .{ext}")
-
-    base = os.path.splitext(path)[0]
-    os.rename(path, f"{base}.{ext}")
+def hex_to_rgb(input: str):
+    h = input.lstrip("#")
+    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
 
 
-def generate_zips(path: str, ext: str):
-    print(f"🏭 Generating zips from {path} with {ext} extension")
+def change_extension(location: str, ext: str):
+    # print(f"✏️ Changing extension from file: {path} to .{ext}")
 
-    for file in file_list(f"{path}\\**\\*.{ext}"):
+    base = path.splitext(location)[0]
+    rename(location, f"{base}.{ext}")
+
+
+def generate_zips(location: str, ext: str):
+    # print(f"🏭 Generating zips from {location} with {ext} extension")
+
+    for file in tqdm(file_list(f"{location}/**/*.{ext}")):
         try:
-            new_file = copy(file, f"{path}/../zips")
+            create_dir(f"{location}/../zips")
+            new_file = copy(file, f"{location}/../zips")
             change_extension(new_file, "zip")
         except FileExistsError:
-            print(f"🟧 File: {new_file} already exist")
+            pass
+            # print(f"🟧 File: already exist")
 
 
-def extract_media(path: str):
-    print(f"👽 Extracting media from {path}...")
+def extract_media(location: str):
+    # # print(f"👽 Extracting media from {location}...")
 
     try:
-        file_name = os.path.split(os.path.splitext(path)[0])[1]
+        file_name = path.split(path.splitext(location)[0])[1]
 
-        new_dir = os.path.join("output", "images", file_name)
-        create_dir(new_dir)
+        new_dir = path.join("output", "images", file_name)
+        mkdir(new_dir)
+        # create_dir(new_dir)
 
-        with ZipFile(path, "r") as zip:
+        with ZipFile(location, "r") as zip:
             for info in zip.infolist():
                 if("media" in info.filename):
                     new_path = zip.extract(
-                        info.filename, os.path.join("output", "images"))
+                        info.filename, path.join("output", "images"))
                     move(new_path, new_dir)
 
-        os.rmdir(os.path.join("output", "images", "ppt", "media"))
-        os.rmdir(os.path.join("output", "images", "ppt"))
+        rmdir(path.join("output", "images", "ppt", "media"))
+        rmdir(path.join("output", "images", "ppt"))
 
     except Exception as e:
-        print(e)
+        # print(e)
         print("🚫 Something wen't wrong")
 
 
-def file_list(path: str):
-    return glob(path, recursive=True)
+def file_list(location: str):
+    return glob(location, recursive=True)
 
 
-def invert_image(image: Image):
-    print("♻️ Inverting image...")
+def remove_white(image: Image):
+    image = image.convert("RGBA")
+    data = image.getdata()
+
+    newData = []
+    for item in data:
+        if item[0] == 255 and item[1] == 255 and item[2] == 255:
+            newData.append((255, 255, 255, 0))
+        else:
+            newData.append(item)
+
+    image.putdata(newData)
+
+    return image.convert("RGB")
+
+
+def remove_alpha(image: Image):
+    # # print("Removing alpha from image...")
 
     image = image.convert("RGBA")
     r, g, b, a = image.split()
@@ -71,39 +97,68 @@ def invert_image(image: Image):
     return image
 
 
-def save_image(path: str, image: Image, out_dir: str):
-    # new_name = os.path.join(out_dir, os.path.split(path)[-1])
-    new_dir = os.path.join(out_dir, os.path.split(os.path.split(path)[0])[1])
-    new_file = os.path.split(path)[-1]
-    new_path = os.path.join(new_dir, new_file)
+def clear_output():
+    for dir in file_list("./output/*"):
+        rmdir(dir)
+
+
+def invert_image(image: Image):
+    # print("♻️ Inverting image...")
+
+    # rgb_image = remove_alpha(image)
+
+    # r, g, b, a = image.split()
+    # rgb_image = Image.merge('RGB', (r, g, b))
+
+    image = image.convert("RGBA")
+    r, g, b, a = image.split()
+    rgb_image = Image.merge('RGB', (r, g, b))
+
+    inverted_image = ImageOps.invert(rgb_image)
+
+    r2, g2, b2 = inverted_image.split()
+
+    image = Image.merge('RGBA', (r2, g2, b2, a))
+
+    # inverted_image = ImageOps.invert(remove_alpha(image))
+
+    return image
+
+
+def save_image(location: str, image: Image, out_dir: str):
+    # new_name = path.join(out_dir, path.split(path)[-1])
+    new_dir = path.join(out_dir, path.split(path.split(location)[0])[1])
+    new_file = path.split(location)[-1]
+    new_path = path.join(new_dir, new_file)
 
     try:
-        os.mkdir(new_dir)
-        print(f"📂 Creating directory: {new_dir}")
+        mkdir(new_dir)
+        # print(f"📂 Creating directory: {new_dir}")
     except:
         pass
 
     image.save(new_path)
-    print("💾 Saving Inverted", path, "as", new_path)
+    # print("💾 Saving Inverted", location, "as", new_path)
 
 
 def create_dir(path: str):
     try:
-        os.mkdir(path)
+        mkdir(path)
     except:
-        print(f"🟧 Directory: {path} already exist")
+        pass
+        # print(f"🟧 Directory: {path} already exist")
 
 
 def overwrite_images_in_zip(file: str):
-    print(f"🖨️ Overwriting zip: {file} with converted images")
-    with ZipFile(f"input\\zips\\{file}.zip", "r") as in_zip:
-        with ZipFile(f"output\\zips\\{file}.zip", "w") as out_zip:
+    # print(f"🖨️ Overwriting zip: {file} with converted images")
+    with ZipFile(f"input/zips/{file}.zip", "r") as in_zip:
+        with ZipFile(f"output/zips/{file}.zip", "w") as out_zip:
             out_zip.comment = in_zip.comment
             for info in in_zip.infolist():
                 if("media" in info.filename):
-                    path = os.path.split(info.filename)[1]
+                    location = path.split(info.filename)[1]
                     out_zip.write(
-                        f"./output/converted/{file}/{path}", info.filename)
+                        f"./output/converted/{file}/{location}", info.filename)
                 else:
                     out_zip.writestr(
                         info, in_zip.read(info.filename))
@@ -116,7 +171,7 @@ def move_files():
 
 
 def modify_presentation(file: str):
-    print(f"✒️ Modifying: ./output/powerpoints/{file}.pptx")
+    # print(f"✒️ Modifying: ./output/powerpoints/{file}.pptx")
     presentation = Presentation(
         f"./output/powerpoints/{file}.pptx")
 
@@ -136,7 +191,7 @@ def modify_presentation(file: str):
             fill.back_color.rgb = RGBColor(0, 0, 0)
 
         except KeyError:
-            print(f"🗑️ Corrupt file: {file}.pptx")
+            # print(f"🗑️ Corrupt file: {file}.pptx")
             continue
 
     presentation.save(f"./output/powerpoints/{file}.pptx")
@@ -144,30 +199,34 @@ def modify_presentation(file: str):
 
 if __name__ == "__main__":
     try:
-        # generate_zips("input/powerpoints", "pptx")
-        # for file in file_list("input\\zips\\**\\*.zip"):
-        #     extract_media(file)
+        create_dir("output/converted")
+        create_dir("output/zips")
+        create_dir("output/powerpoints")
 
-        for file in file_list("output\\images\\**\\*.png"):
+        generate_zips("input/powerpoints", "pptx")
+
+        for file in tqdm(file_list("input/zips/**/*.zip")):
+            extract_media(file)
+
+        for file in tqdm(file_list("output/images/**/*.png")):
             # Open image
             image = Image.open(file)
             # Invert colors
             image = invert_image(image)
+
             # Save image
-            save_image(file, image, os.path.join("output", "converted"))
+            save_image(file, image, path.join("output", "converted"))
 
-        # directories = os.listdir("output/converted")
+        directories = listdir("output/converted")
 
-        # create_dir("output\\zips")
-        # create_dir("output\\powerpoints")
-
-        # for directory in directories:
-        #     overwrite_images_in_zip(directory)
-        #     move_files()
-        #     modify_presentation(directory)
+        for directory in tqdm(directories):
+            overwrite_images_in_zip(directory)
+            move_files()
+            modify_presentation(directory)
 
     except BadZipFile:
-        print("🤐 Zip error")
+        pass
+        # print("🤐 Zip error")
 
     except KeyboardInterrupt:
         print("🚫 Cancelled")
