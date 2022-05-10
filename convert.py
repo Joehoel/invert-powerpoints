@@ -1,16 +1,28 @@
+import os
+import subprocess
 from glob import glob
-from tempfile import gettempdir
-from os import rename, path, mkdir, rmdir
+from os import mkdir, path, rename, rmdir
 from shutil import copy, move, rmtree
-from PIL import Image, ImageOps
+from tempfile import gettempdir
 from zipfile import BadZipFile, ZipFile
-from tqdm import tqdm
-from pptx.api import Presentation
-from pptx.presentation import Presentation as PPTX
-from pptx.dml.color import RGBColor
 
+from PIL import Image, ImageOps
+from pptx.api import Presentation  # type: ignore
+from pptx.dml.color import RGBColor
+from pptx.enum.dml import MSO_THEME_COLOR  # type: ignore
+from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.presentation import Presentation as PPTX
+from tqdm import tqdm
 
 TEMP_DIR = gettempdir()
+
+
+def open_file(filename: str):
+    '''Open document with default application in Python.'''
+    try:
+        os.startfile(filename)  # type: ignore
+    except AttributeError:
+        subprocess.call(['open', filename])
 
 
 def file_list(location: str):
@@ -31,10 +43,19 @@ def change_extension(location: str, ext: str):
     return file
 
 
-FILE = path.join("input", "powerpoints",
-                 "'k Ben een koninklijk kind (EL 180).pptx")
+# FILE = path.join("input", "powerpoints",
+    #  "'k Ben een koninklijk kind (EL 180).pptx")
+
+files = file_list(path.join("input"))
 
 # 0. Clear all previous operations
+in_zips_path = path.join(TEMP_DIR, "in-zips")
+extracted_path = path.join(TEMP_DIR, "extracted")
+if path.exists(in_zips_path):
+    rmtree(in_zips_path)
+if path.exists(extracted_path):
+    rmtree(extracted_path)
+
 rmtree("output")
 mkdir("output")
 
@@ -42,21 +63,18 @@ mkdir("output")
 
 
 def convert_to_zip(file: str):
-    dir = path.join(TEMP_DIR, "in-zips")
-    create_dir(dir)
-    new_file = copy(file, dir)
-    change_extension(new_file, "zip")
+    create_dir(in_zips_path)
+    new_file = copy(file, in_zips_path)
+    return change_extension(new_file, "zip")
 
 
-convert_to_zip(FILE)
+# convert_to_zip(FILE)
 
 # 2. Extract media from zip
 
 
 def extract_media(file: str):
-    # # print(f"👽 Extracting media from {location}...")
 
-    extracted_path = path.join("output", "extracted")
     create_dir(extracted_path)
 
     # Create a directory for the all the media
@@ -77,15 +95,14 @@ def extract_media(file: str):
                 move(new_path, new_dir)
 
     rmtree(path.join(extracted_path, "ppt"))
+    return new_dir
 
 
-extract_media(FILE)
+# extract_media(FILE)
 # 3. Remove all white pixels from all media AND invert image
 
 
-def remove_white(file: str):
-    image = Image.open(file)
-
+def remove_white(image):
     image = image.convert("RGBA")
     data = image.getdata()
 
@@ -97,17 +114,18 @@ def remove_white(file: str):
             newData.append(item)
 
     image.putdata(newData)
-    return image.convert("RGB")
+    return image
 
 
-def invert_image(file: str):
-    image = Image.open(file)
+def invert_image(image):
+    # image = Image.open(file)
     image = image.convert("RGBA")
 
     r, g, b, a = image.split()
     rgb_image = Image.merge('RGB', (r, g, b))
 
     inverted_image = ImageOps.invert(rgb_image)
+    # image = ImageOps.invert(image)
 
     r2, g2, b2 = inverted_image.split()
 
@@ -115,13 +133,30 @@ def invert_image(file: str):
     return image
 
 
-media = glob(path.join("output", "extracted", "**/*"))
+def remove_transparency(im, bg_colour=(255, 255, 255)):
 
-print("Removing all white pixels from all media and inverting the image")
-for file in tqdm(media):
-    image = remove_white(file)
-    image = invert_image(file)
-    image.save(file)
+    # Only process if image has transparency (http://stackoverflow.com/a/1963146)
+    if im.mode in ('RGBA', 'LA') or (im.mode == 'P' and 'transparency' in im.info):
+
+        # Need to convert to RGBA if LA format due to a bug in PIL (http://stackoverflow.com/a/1963146)
+        alpha = im.convert('RGBA').split()[-1]
+
+        # Create a new background image of our matt color.
+        # Must be RGBA because paste requires both images have the same format
+        # (http://stackoverflow.com/a/8720632  and  http://stackoverflow.com/a/9459208)
+        bg = Image.new("RGBA", im.size, bg_colour + (255,))
+        bg.paste(im, mask=alpha)
+        return bg
+
+    else:
+        print("Cant remove transparency")
+        return im
+# media = glob(path.join(TEMP_DIR, "extracted", "**/*"))
+
+# for file in tqdm(media):
+#     image = remove_white(file)
+#     image = invert_image(file)
+#     image.save(file)
 
 
 # 5. Replace the new images with the old images in the zip
@@ -144,7 +179,7 @@ def replace_media(folder: str):
                 if("media" in info.filename):
                     location = path.split(info.filename)[1]
                     new_location = path.join(
-                        "output", "extracted", folder, location)
+                        TEMP_DIR, "extracted", folder, location)
 
                     out_zip.write(
                         new_location, info.filename)
@@ -154,49 +189,91 @@ def replace_media(folder: str):
     return output_path
 
 
-FOLDER = path.splitext(path.split(FILE)[1])[0]
+# FOLDER = path.splitext(path.split(FILE)[1])[0]
 
-out_zip = replace_media(FOLDER)
+# out_zip = replace_media(FOLDER)
 
 # 6. Convert the zip folders back to powerpoints
 
 
 def convert_to_pptx(file: str):
-    dir = path.join("output", "powerpoints")
+    dir = path.join("output")
     create_dir(dir)
     new_file = copy(file, dir)
     return change_extension(new_file, "pptx")
 
 
-pptx_file = convert_to_pptx(out_zip)
+# pptx_file = convert_to_pptx(out_zip)
 
 # 7. Update the powerpoint colors
 
 
 def modify_pptx(file: str):
-    # print(f"✒️ Modifying: ./output/powerpoints/{file}.pptx")
     pptx: PPTX = Presentation(file)
 
     for slide in pptx.slides:
         try:
-            for shape in slide.shapes:
-                if shape.has_text_frame:
-                    for p in shape.text_frame.paragraphs:
-                        p.font.color.rgb = RGBColor(255, 255, 255)
-                        run = p.add_run()
-                        run.font.color.rgb = RGBColor(255, 255, 255)
-
+            # Update background color
             background = slide.background
             fill = background.fill
             fill.solid()
             fill.patterned()
             fill.back_color.rgb = RGBColor(0, 0, 0)
 
+            # for shape in slide.placeholders:
+            #     print('%d %s' % (shape.placeholder_format.idx, shape.name))
+
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    for p in shape.text_frame.paragraphs:
+                        for run in p.runs:
+                            run.font.color.rgb = RGBColor(255, 255, 255)
+                        # p.font.color.theme_color = MSO_THEME_COLOR.DARK_1
+                # if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                    # shape.element.fill.fore_color.rgb = RGBColor(255, 255, 255)
+                    # shape.part.source.fill.fore_color.rgb = RGBColor(
+                    #     255, 255, 255)
+
         except KeyError:
-            # print(f"🗑️ Corrupt file: {file}.pptx")
             continue
 
-    pptx.save(file)
+    name = path.split(file)[1]
+    pptx.save(path.join("output", name))
 
 
-modify_pptx(pptx_file)
+# modify_pptx(pptx_file)
+
+# print(TEMP_DIR)
+
+for file in tqdm(file_list("input/**/*.pptx")):
+    try:
+        # print('\n', file)
+
+        convert_to_zip(file)
+        directory = extract_media(file)
+
+        media = file_list(path.join(directory, "**/*.png"))
+
+        for item in media:
+            image = Image.open(item)
+
+            image = remove_white(image)
+            image = invert_image(image)
+            image.save(item, "PNG")
+
+        folder = path.splitext(path.split(file)[1])[0]
+
+        out_zip = replace_media(folder)
+        pptx_file = convert_to_pptx(out_zip)
+        modify_pptx(pptx_file)
+
+    except KeyboardInterrupt:
+        exit()
+
+    except Exception as e:
+        print(e)
+        continue
+
+file = file_list(path.join("output", "**/*.pptx"))[0]
+
+open_file(file)
