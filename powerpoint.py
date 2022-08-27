@@ -1,20 +1,28 @@
 import os
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import subprocess
+import tempfile
 from glob import glob
+from multiprocessing import Pool, cpu_count
 from os import mkdir, path, rename, rmdir
 from shutil import copy, move, rmtree
 from tempfile import gettempdir
+from threading import Thread
 from zipfile import BadZipFile, ZipFile
 
+from alive_progress import alive_bar
 from PIL import Image, ImageOps
+from cv2 import Mat, bitwise_not, imread, imwrite
 from pptx.api import Presentation  # type: ignore
 from pptx.dml.color import RGBColor
 from pptx.enum.dml import MSO_THEME_COLOR  # type: ignore
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.presentation import Presentation as PPTX
-from tqdm import tqdm
-
-TEMP_DIR = gettempdir()
+import numpy as np
+import cv2
+import json
+from matplotlib import pyplot as plt
+# TEMP_DIR = gettempdir()
 
 
 def open_file(filename: str):
@@ -46,24 +54,29 @@ def change_extension(location: str, ext: str):
 # FILE = path.join("input", "powerpoints",
     #  "'k Ben een koninklijk kind (EL 180).pptx")
 
-files = file_list(path.join("input"))
+# files = file_list(path.join("input"))
 
-# 0. Clear all previous operations
-in_zips_path = path.join(TEMP_DIR, "in-zips")
-extracted_path = path.join(TEMP_DIR, "extracted")
-if path.exists(in_zips_path):
-    rmtree(in_zips_path)
-if path.exists(extracted_path):
-    rmtree(extracted_path)
+# # 0. Clear all previous operations
+# in_zips_path = path.join(TEMP_DIR, "in-zips")
+# extracted_path = path.join(TEMP_DIR, "extracted")
+# if path.exists(in_zips_path):
+#     rmtree(in_zips_path)
+# if path.exists(extracted_path):
+#     rmtree(extracted_path)
 
-rmtree("output")
-mkdir("output")
+def clear_output():
+    rmtree("output")
+    mkdir("output")
 
 # 1. Convert powerpoint to zip
 
 
+in_zips_path = tempfile.mkdtemp()
+extracted_path = tempfile.mkdtemp()
+
+
 def convert_to_zip(file: str):
-    create_dir(in_zips_path)
+    # create_dir(in_zips_path)
     new_file = copy(file, in_zips_path)
     return change_extension(new_file, "zip")
 
@@ -75,7 +88,7 @@ def convert_to_zip(file: str):
 
 def extract_media(file: str):
 
-    create_dir(extracted_path)
+    # create_dir(extracted_path)
 
     # Create a directory for the all the media
     file_name = path.split(path.splitext(file)[0])[1]
@@ -118,59 +131,70 @@ def remove_white(image):
 
 
 def invert_image(image):
+    inverted_image = bitwise_not(image)
+    return inverted_image
     # image = Image.open(file)
-    image = image.convert("RGBA")
+    # image = image.convert("L")
 
-    r, g, b, a = image.split()
-    rgb_image = Image.merge('RGB', (r, g, b))
+    # r, g, b, a = image.split()
+    # rgb_image = Image.merge('RGB', (r, g, b))
 
-    inverted_image = ImageOps.invert(rgb_image)
-    # image = ImageOps.invert(image)
+    # inverted_image = ImageOps.invert(rgb_image)
 
-    r2, g2, b2 = inverted_image.split()
+    # r2, g2, b2 = inverted_image.split()
 
-    image = Image.merge('RGBA', (r2, g2, b2, a))
-    return image
+    # image = Image.merge('RGBA', (r2, g2, b2, a))
+    # return image
 
 
-def remove_transparency(im, bg_colour=(255, 255, 255)):
+def remove_transparency(image, bg_colour=(255, 255, 255)):
+    alpha = image.convert('RGBA').split()[-1]
+    bg = Image.new("RGBA", image.size, bg_colour + (255,))
+    bg.paste(image, mask=alpha)
+    return bg
+    # trans_mask = image[:, :, 3] == 0
 
+    # # replace areas of transparency with white and not transparent
+    # image[trans_mask] = [255, 255, 255, 255]
+
+    # # new image without alpha channel...
+    # new_img = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+    # return new_img
     # Only process if image has transparency (http://stackoverflow.com/a/1963146)
-    if im.mode in ('RGBA', 'LA') or (im.mode == 'P' and 'transparency' in im.info):
+    # if image.mode in ('RGBA', 'LA') or (image.mode == 'P' and 'transparency' in image.info):
+    #     print(image.info)
+    #     # Need to convert to RGBA if LA format due to a bug in PIL (http://stackoverflow.com/a/1963146)
+    #     alpha = image.convert('RGBA').split()[-1]
 
-        # Need to convert to RGBA if LA format due to a bug in PIL (http://stackoverflow.com/a/1963146)
-        alpha = im.convert('RGBA').split()[-1]
+    #     # Create a new background image of our matt color.
+    #     # Must be RGBA because paste requires both images have the same format
+    #     # (http://stackoverflow.com/a/8720632  and  http://stackoverflow.com/a/9459208)
+    #     bg = Image.new("RGBA", image.size, bg_colour + (255))
+    #     bg.paste(image, mask=alpha)
+    #     return bg
 
-        # Create a new background image of our matt color.
-        # Must be RGBA because paste requires both images have the same format
-        # (http://stackoverflow.com/a/8720632  and  http://stackoverflow.com/a/9459208)
-        bg = Image.new("RGBA", im.size, bg_colour + (255,))
-        bg.paste(im, mask=alpha)
-        return bg
+    # else:
+    #     pass
+    # return remove_transparency(image.convert("P"))
+    # media = glob(path.join(TEMP_DIR, "extracted", "**/*"))
 
-    else:
-        print("Cant remove transparency")
-        return im
-# media = glob(path.join(TEMP_DIR, "extracted", "**/*"))
+    # for file in tqdm(media):
+    #     image = remove_white(file)
+    #     image = invert_image(file)
+    #     image.save(file)
 
-# for file in tqdm(media):
-#     image = remove_white(file)
-#     image = invert_image(file)
-#     image.save(file)
-
-
-# 5. Replace the new images with the old images in the zip
+    # 5. Replace the new images with the old images in the zip
 
 
 def replace_media(folder: str):
     file = f"{folder}.zip"
 
-    input_path = path.join(TEMP_DIR, "in-zips", file)
+    input_path = path.join(in_zips_path, file)
 
-    out_folder = path.join(TEMP_DIR, "in_zips")
+    # out_folder = path.join(extracted_path, "out_folder")
 
-    create_dir(out_folder)
-    output_path = path.join(out_folder, file)
+    # create_dir(out_folder)
+    output_path = path.join(extracted_path, file)
 
     with ZipFile(input_path, "r") as in_zip:
         with ZipFile(output_path, "w") as out_zip:
@@ -179,7 +203,7 @@ def replace_media(folder: str):
                 if("media" in info.filename):
                     location = path.split(info.filename)[1]
                     new_location = path.join(
-                        TEMP_DIR, "extracted", folder, location)
+                        extracted_path, folder, location)
 
                     out_zip.write(
                         new_location, info.filename)
@@ -239,41 +263,162 @@ def modify_pptx(file: str):
 
     name = path.split(file)[1]
     pptx.save(path.join("output", name))
-
+    return path.join("output", name)
 
 # modify_pptx(pptx_file)
 
 # print(TEMP_DIR)
 
-for file in tqdm(file_list("input/**/*.pptx")):
+
+def white_to_transparency(img):
+    x = np.asarray(img.convert('RGBA')).copy()
+
+    x[:, :, 3] = (0 * (x[:, :, :3] != 0).any(axis=2)).astype(np.uint8)
+
+    return Image.fromarray(x)
+
+
+def convert_image(file: str):
+    image = Image.open(file)
+
+    image = image.convert("RGB")
+
+    image = ImageOps.invert(image)
+    # pixels = image.load()
+    # width, height = image.size
+
+    # for y in range(height):
+    #     for x in range(width):
+    #         if pixels[x, y] == (0, 0, 0, 255):
+    #             pixels[x, y] = (255, 255, 255, 255)
+    #         elif pixels[x, y] == (255, 255, 255, 255):
+    #             pixels[x, y] = (0, 0, 0, 0)
+    image.save(file, "PNG")
+    # image = remove_transparency(image)
+
+    # image.convert("RGB")
+
+    # image = ImageOps.invert(image)
+
+    # image = imread(file, 0)
+
+    # image = invert_image(image)
+
+    # imwrite(file, image)
+    # image.save(file)
+    # image = invert_this(file, gray_scale=True)
+    # image = remove_transparency(image)
+
+    # cv2.imwrite(file, image)
+    # image.save(file, "PNG")
+
+
+def convert_pptx(file: str):
+
+    convert_to_zip(file)
+    directory = extract_media(file)
+
+    media = file_list(path.join(directory, "**/*.png"))
+
+    # with concurrent.futures.ProcessPoolExecutor() as executor:
+    #     executor.map(convert_image, media)
+    for item in media:
+        convert_image(item)
+        # image = Image.open(item)
+
+        # image = invert_image(image)
+        # image.save(item, "PNG")
+
+    folder = path.splitext(path.split(file)[1])[0]
+
+    out_zip = replace_media(folder)
+    pptx_file = convert_to_pptx(out_zip)
+
+    modify_pptx(pptx_file)
+
+    return file
+
+
+def read_image(image_file: str, gray_scale=False):
+    image_src = cv2.imread(image_file)
+    if gray_scale:
+        image_src = cv2.cvtColor(image_src, cv2.COLOR_BGR2GRAY)
+    else:
+        image_src = cv2.cvtColor(image_src, cv2.COLOR_BGR2RGB)
+    return image_src
+
+
+def invert_this(image_file: str, gray_scale=False):
+    image_src = read_image(image_file=image_file, gray_scale=gray_scale)
+    # image_i = ~ image_src
+    image_i = 255 - image_src
+
+    return image_i
+
+
+if __name__ == "__main__":
     try:
-        # print('\n', file)
+        clear_output()
 
-        convert_to_zip(file)
-        directory = extract_media(file)
+        files = file_list("input/**/*.pptx")
 
-        media = file_list(path.join(directory, "**/*.png"))
+        with Pool() as pool:
+            with alive_bar(len(files), dual_line=True,  title="Converting powerpoints...") as bar:
+                for file in pool.imap_unordered(convert_pptx, files):
+                    bar.text = f"Converted '{file}'..."
+                    bar()
 
-        for item in media:
-            image = Image.open(item)
+        # threads = []
 
-            image = remove_white(image)
-            image = invert_image(image)
-            image.save(item, "PNG")
+        # for file in files:
+        #     threads.append(Thread(target=convert_pptx, args=[file, ]))
 
-        folder = path.splitext(path.split(file)[1])[0]
+        # for thread in threads:
+        #         thread.start()
+        #         bar()
+            # with ThreadPoolExecutor(cpu_count()) as executor:
+            #     for _ in executor.map(convert_pptx, files):
 
-        out_zip = replace_media(folder)
-        pptx_file = convert_to_pptx(out_zip)
-        modify_pptx(pptx_file)
+        # with Pool(cpu_count()) as pool:
+            # for _ in pool.imap_unordered(convert_pptx, files):
+            # bar()
 
-    except KeyboardInterrupt:
-        exit()
+        file = file_list(path.join("output", "**/*.pptx"))[0]
 
+        open_file(file)
+
+        # with concurrent.futures.ProcessPoolExecutor() as executor:
+        # results = executor.map(convert_pptx,
+        #                        file_list("input/**/*.pptx"))
+        # for result in results:
+        #     if results != None:
+        #         print(result)
+
+        # for file in tqdm(file_list("input/**/*.pptx")):
+        # convert_pptx(file)
+
+        # with Pool() as pool:
+        #     results = pool.imap(
+        #         convert_pptx, file_list("input/**/*.pptx"))
+
+        #     for result in tqdm(results):
+        #         print(result)
     except Exception as e:
         print(e)
-        continue
 
-file = file_list(path.join("output", "**/*.pptx"))[0]
+# for file in tqdm(file_list("input/**/*.pptx")):
+#     try:
+#         # print('\n', file)
 
-open_file(file)
+#         with Pool() as pool:
+#             results = pool.imap_unordered(
+#                 convert_pptx, tqdm(file_list("input/**/*.pptx")))
+
+#         # convert_pptx(file)
+
+#     except KeyboardInterrupt:
+#         exit()
+
+#     except Exception as e:
+#         print(e)
+#         continue

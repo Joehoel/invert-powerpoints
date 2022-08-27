@@ -39,7 +39,7 @@ def change_extension(location: str, ext: str):
 
 def invert_image(image):
     # image = Image.open(file)
-    image = image.convert("RGBA")
+    image = image.convert("RGB")
 
     r, g, b, a = image.split()
     rgb_image = Image.merge('RGB', (r, g, b))
