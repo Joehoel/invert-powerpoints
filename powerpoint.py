@@ -1,28 +1,45 @@
+import json
 import os
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from posixpath import splitext
+from shutil import copy, rmtree
 import subprocess
 import tempfile
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from glob import glob
 from multiprocessing import Pool, cpu_count
 from os import mkdir, path, rename, rmdir
-from shutil import copy, move, rmtree
+from re import I
 from tempfile import gettempdir
 from threading import Thread
-from zipfile import BadZipFile, ZipFile
+from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
+import cv2
+import numpy as np
 from alive_progress import alive_bar
-from PIL import Image, ImageOps
 from cv2 import Mat, bitwise_not, imread, imwrite
+from matplotlib import pyplot as plt
+from PIL import Image, ImageOps, ImageFile
 from pptx.api import Presentation  # type: ignore
 from pptx.dml.color import RGBColor
 from pptx.enum.dml import MSO_THEME_COLOR  # type: ignore
 from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.parts import image
 from pptx.presentation import Presentation as PPTX
-import numpy as np
-import cv2
-import json
-from matplotlib import pyplot as plt
+from pptx.util import Inches
+from pptx import opc
+
+
+# def related_parts(self):
+#     return {
+#         rId: rel.target_part
+#         for rId, rel in self._rels.items()
+#     }
+
+
+# opc.package.Part.related_parts = related_parts
+
 # TEMP_DIR = gettempdir()
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 def open_file(filename: str):
@@ -44,13 +61,6 @@ def create_dir(path: str):
         pass
 
 
-def change_extension(location: str, ext: str):
-    base = path.splitext(location)[0]
-    file = f"{base}.{ext}"
-    rename(location, file)
-    return file
-
-
 # FILE = path.join("input", "powerpoints",
     #  "'k Ben een koninklijk kind (EL 180).pptx")
 
@@ -65,25 +75,18 @@ def change_extension(location: str, ext: str):
 #     rmtree(extracted_path)
 
 def clear_output():
+    rmtree("images")
+    mkdir('images')
     rmtree("output")
     mkdir("output")
+    rmtree("between")
+    mkdir("between")
 
 # 1. Convert powerpoint to zip
 
 
 in_zips_path = tempfile.mkdtemp()
 extracted_path = tempfile.mkdtemp()
-
-
-def convert_to_zip(file: str):
-    # create_dir(in_zips_path)
-    new_file = copy(file, in_zips_path)
-    return change_extension(new_file, "zip")
-
-
-# convert_to_zip(FILE)
-
-# 2. Extract media from zip
 
 
 def extract_media(file: str):
@@ -131,20 +134,18 @@ def remove_white(image):
 
 
 def invert_image(image):
-    inverted_image = bitwise_not(image)
-    return inverted_image
     # image = Image.open(file)
-    # image = image.convert("L")
+    image = image.convert("RGBA")
 
-    # r, g, b, a = image.split()
-    # rgb_image = Image.merge('RGB', (r, g, b))
+    r, g, b, a = image.split()
+    rgb_image = Image.merge('RGB', (r, g, b))
 
-    # inverted_image = ImageOps.invert(rgb_image)
+    inverted_image = ImageOps.invert(rgb_image)
 
-    # r2, g2, b2 = inverted_image.split()
+    r2, g2, b2 = inverted_image.split()
 
-    # image = Image.merge('RGBA', (r2, g2, b2, a))
-    # return image
+    image = Image.merge('RGBA', (r2, g2, b2, a))
+    return image
 
 
 def remove_transparency(image, bg_colour=(255, 255, 255)):
@@ -158,8 +159,6 @@ def remove_transparency(image, bg_colour=(255, 255, 255)):
     # image[trans_mask] = [255, 255, 255, 255]
 
     # # new image without alpha channel...
-    # new_img = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
-    # return new_img
     # Only process if image has transparency (http://stackoverflow.com/a/1963146)
     # if image.mode in ('RGBA', 'LA') or (image.mode == 'P' and 'transparency' in image.info):
     #     print(image.info)
@@ -219,22 +218,108 @@ def replace_media(folder: str):
 
 # 6. Convert the zip folders back to powerpoints
 
+def change_extension(file: str, ext: str):
+    # Change the extension of a file and rename it
+    new_file = f"{path.splitext(file)[0]}.{ext}"
+    rename(file, new_file)
+    return new_file
+
 
 def convert_to_pptx(file: str):
     dir = path.join("output")
     create_dir(dir)
-    new_file = copy(file, dir)
     return change_extension(new_file, "pptx")
+
+
+# Replace the current image on the slide with the new inverted_image
 
 
 # pptx_file = convert_to_pptx(out_zip)
 
+
 # 7. Update the powerpoint colors
 
 
-def modify_pptx(file: str):
-    pptx: PPTX = Presentation(file)
+# function to replace a picture in a slide with a new picture
+def replace_picture(slide, shape, new_picture):
+    """
+    function to replace a picture in a slide with a new picture
+    """
+    if(shape.shape_type == MSO_SHAPE_TYPE.PLACEHOLDER):
 
+        # get the placeholder shape
+        placeholder = slide.shapes[shape.placeholder_format.idx]
+        # get the placeholder size
+        width, height = placeholder.width, placeholder.height
+        # get the placeholder position
+        left, top = placeholder.left, placeholder.top
+        # delete the placeholder
+        placeholder.delete()
+        # add the new picture
+        slide.shapes.add_picture(new_picture, left, top,
+                                 width=width, height=height)
+
+# def replace_picture(slide_obj, shape_obj, img_location):
+
+    # with open(img_location, "rb") as file_obj:
+    #     r_img_blob = file_obj.read()
+    #     img_pic = shape_obj._pic
+    #     img_rid = img_pic.xpath("./p:blipFill/a:blip/@r:embed")[0]
+    #     img_part = slide_obj.part.related_parts[img_rid]
+    #     img_part._blob = r_img_blob
+    # noinspection PyProtectedMember
+    # new_shape = slide_obj.shapes.add_picture(
+    #     img_location,
+    #     Inches(shape_obj.left),
+    #     Inches(shape_obj.top),
+    #     Inches(shape_obj.width),
+    #     Inches(shape_obj.height),
+    # )
+    # old_pic = shape_obj._element
+    # new_pic = new_shape._element
+    # old_pic.addnext(new_pic)
+    # old_pic.getparent().remove(old_pic)
+
+
+def extract_images(name: str, pptx: PPTX):
+
+    # name: str = pptx.core_properties.subject
+
+    images_folder_path = path.join("images", name)
+    rmtree(images_folder_path, ignore_errors=True)
+    create_dir(images_folder_path)
+
+    for index, slide in enumerate(pptx.slides):  # type: ignore
+        for shape in slide.shapes:
+            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+
+                # slide_part, rId = shape.part, shape._element.blip_rId
+                # print(slide_part)
+                # image_part = slide_part.related_parts[rId]
+                # image_part.blob = new_blob
+                image = shape.image
+                image_bytes = image.blob
+
+                image_filename = f'{name}-{index}.{image.ext}'
+
+                image_path = path.join(tempfile.mkdtemp(), image_filename)
+
+                with open(image_path, 'wb') as f:
+                    f.write(image_bytes)
+
+                open_image = Image.open(image_path)
+
+                transparent_image = remove_white(open_image)
+                inverted_image = invert_image(transparent_image)
+
+                new_image_path = path.join(
+                    images_folder_path, f"image{index + 1}.png")
+                inverted_image.save(new_image_path, "PNG")
+
+    return pptx, images_folder_path
+
+
+def invert_colors(pptx: PPTX):
     for slide in pptx.slides:  # type: ignore
         try:
             # Update background color
@@ -252,173 +337,128 @@ def modify_pptx(file: str):
                     for p in shape.text_frame.paragraphs:
                         for run in p.runs:
                             run.font.color.rgb = RGBColor(255, 255, 255)
-                        # p.font.color.theme_color = MSO_THEME_COLOR.DARK_1
-                # if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-                    # shape.element.fill.fore_color.rgb = RGBColor(255, 255, 255)
-                    # shape.part.source.fill.fore_color.rgb = RGBColor(
-                    #     255, 255, 255)
 
         except KeyError:
             continue
 
-    name = path.split(file)[1]
-    pptx.save(path.join("output", name))
-    return path.join("output", name)
+    return pptx
 
 # modify_pptx(pptx_file)
 
 # print(TEMP_DIR)
 
 
-def white_to_transparency(img):
-    x = np.asarray(img.convert('RGBA')).copy()
-
-    x[:, :, 3] = (0 * (x[:, :, :3] != 0).any(axis=2)).astype(np.uint8)
-
-    return Image.fromarray(x)
-
-
 def convert_image(file: str):
     image = Image.open(file)
 
-    image = image.convert("RGB")
+    image = image.convert("RGBA")
 
-    image = ImageOps.invert(image)
-    # pixels = image.load()
-    # width, height = image.size
+    r, g, b, a = image.split()
+    rgb_image = Image.merge('RGB', (r, g, b))
 
-    # for y in range(height):
-    #     for x in range(width):
-    #         if pixels[x, y] == (0, 0, 0, 255):
-    #             pixels[x, y] = (255, 255, 255, 255)
-    #         elif pixels[x, y] == (255, 255, 255, 255):
-    #             pixels[x, y] = (0, 0, 0, 0)
+    inverted_image = ImageOps.invert(rgb_image)
+
+    r2, g2, b2 = inverted_image.split()
+
+    image = Image.merge('RGBA', (r2, g2, b2, a))
+
     image.save(file, "PNG")
-    # image = remove_transparency(image)
-
-    # image.convert("RGB")
-
-    # image = ImageOps.invert(image)
-
-    # image = imread(file, 0)
-
-    # image = invert_image(image)
-
-    # imwrite(file, image)
-    # image.save(file)
-    # image = invert_this(file, gray_scale=True)
-    # image = remove_transparency(image)
-
-    # cv2.imwrite(file, image)
-    # image.save(file, "PNG")
 
 
 def convert_pptx(file: str):
 
-    convert_to_zip(file)
-    directory = extract_media(file)
+    invert_colors(file)
 
-    media = file_list(path.join(directory, "**/*.png"))
+    # convert_to_zip(file)
+    # directory = extract_media(file)
 
-    # with concurrent.futures.ProcessPoolExecutor() as executor:
-    #     executor.map(convert_image, media)
-    for item in media:
-        convert_image(item)
-        # image = Image.open(item)
+    # media = file_list(path.join(directory, "**/*.png"))
 
-        # image = invert_image(image)
-        # image.save(item, "PNG")
+    # # # with concurrent.futures.ProcessPoolExecutor() as executor:
+    # # #     executor.map(convert_image, media)
+    # for item in media:
+    #     # convert_image(item)
+    #     image = Image.open(item)
 
-    folder = path.splitext(path.split(file)[1])[0]
+    #     transparent_image = remove_white(image)
+    #     inverted_image = invert_image(transparent_image)
+    #     # image = invert_image(image)
+    #     # image = invert_image(image)
 
-    out_zip = replace_media(folder)
-    pptx_file = convert_to_pptx(out_zip)
+    #     inverted_image.save(item, "PNG")
 
-    modify_pptx(pptx_file)
+    # folder = path.splitext(path.split(file)[1])[0]
+
+    # out_zip = replace_media(folder)
+    # pptx_file = convert_to_pptx(out_zip)
+
+    # modify_pptx(pptx_file)
 
     return file
 
 
-def read_image(image_file: str, gray_scale=False):
-    image_src = cv2.imread(image_file)
-    if gray_scale:
-        image_src = cv2.cvtColor(image_src, cv2.COLOR_BGR2GRAY)
-    else:
-        image_src = cv2.cvtColor(image_src, cv2.COLOR_BGR2RGB)
-    return image_src
+# def read_image(image_file: str, gray_scale=False):
+#     image_src = cv2.imread(image_file)
+#     if gray_scale:
+#         image_src = cv2.cvtColor(image_src, cv2.COLOR_BGR2GRAY)
+#     else:
+#         image_src = cv2.cvtColor(image_src, cv2.COLOR_BGR2RGB)
+#     return image_src
 
 
-def invert_this(image_file: str, gray_scale=False):
-    image_src = read_image(image_file=image_file, gray_scale=gray_scale)
-    # image_i = ~ image_src
-    image_i = 255 - image_src
-
-    return image_i
+def convert_to_zip(file: str):
+    return change_extension(file, "zip")
 
 
 if __name__ == "__main__":
-    try:
-        clear_output()
+    clear_output()
 
-        files = file_list("input/**/*.pptx")
+    files = file_list("input/**/*.pptx")
 
-        with Pool() as pool:
-            with alive_bar(len(files), dual_line=True,  title="Converting powerpoints...") as bar:
-                for file in pool.imap_unordered(convert_pptx, files):
-                    bar.text = f"Converted '{file}'..."
-                    bar()
+    for file in files:
+        with alive_bar(len(files), dual_line=True,  title="Converting powerpoints...") as bar:
 
-        # threads = []
+            pptx: PPTX = Presentation(file)
 
-        # for file in files:
-        #     threads.append(Thread(target=convert_pptx, args=[file, ]))
+            name = path.split(path.splitext(file)[0])[1]
 
-        # for thread in threads:
-        #         thread.start()
-        #         bar()
-            # with ThreadPoolExecutor(cpu_count()) as executor:
-            #     for _ in executor.map(convert_pptx, files):
+            pptx, images_folder_path = extract_images(name, pptx)
+            pptx = invert_colors(pptx)
 
-        # with Pool(cpu_count()) as pool:
-            # for _ in pool.imap_unordered(convert_pptx, files):
-            # bar()
+            new_file_path = path.join("between", name)
 
-        file = file_list(path.join("output", "**/*.pptx"))[0]
+            pptx.save(new_file_path)
 
-        open_file(file)
+            input_zip_file = convert_to_zip(new_file_path)
 
-        # with concurrent.futures.ProcessPoolExecutor() as executor:
-        # results = executor.map(convert_pptx,
-        #                        file_list("input/**/*.pptx"))
-        # for result in results:
-        #     if results != None:
-        #         print(result)
+            output_zip_file = path.join(
+                "output", path.split(input_zip_file)[1])
 
-        # for file in tqdm(file_list("input/**/*.pptx")):
-        # convert_pptx(file)
+            copy(input_zip_file, output_zip_file)
 
-        # with Pool() as pool:
-        #     results = pool.imap(
-        #         convert_pptx, file_list("input/**/*.pptx"))
+            with ZipFile(input_zip_file, "r") as zip_ref:
+                with ZipFile(output_zip_file, "w") as zip:
+                    zip.comment = zip_ref.comment
+                    for info in zip_ref.infolist():
+                        # replace the old images with the new images
+                        if("media" in info.filename):
+                            image_name = path.split(info.filename)[1]
+                            image_path = path.join(
+                                images_folder_path, image_name)
 
-        #     for result in tqdm(results):
-        #         print(result)
-    except Exception as e:
-        print(e)
+                            zip.write(image_path, info.filename)
+                        else:
+                            zip.writestr(
+                                info, zip_ref.read(info.filename))
 
-# for file in tqdm(file_list("input/**/*.pptx")):
-#     try:
-#         # print('\n', file)
+            change_extension(output_zip_file, "pptx")
 
-#         with Pool() as pool:
-#             results = pool.imap_unordered(
-#                 convert_pptx, tqdm(file_list("input/**/*.pptx")))
+            bar.text = f"Converted '{file}'..."
+            bar()
 
-#         # convert_pptx(file)
+    # with Pool() as pool:
+    #         for file in pool.imap_unordered(convert_pptx, files):
 
-#     except KeyboardInterrupt:
-#         exit()
+    file = file_list(path.join("output", "**/*.pptx"))[0]
 
-#     except Exception as e:
-#         print(e)
-#         continue
+    open_file(file)

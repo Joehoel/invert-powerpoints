@@ -37,9 +37,24 @@ def change_extension(location: str, ext: str):
     return file
 
 
+def remove_white(image):
+    image = image.convert("RGBA")
+    data = image.getdata()
+
+    newData = []
+    for item in data:
+        if item[0] == 255 and item[1] == 255 and item[2] == 255:
+            newData.append((255, 255, 255, 0))
+        else:
+            newData.append(item)
+
+    image.putdata(newData)
+    return image
+
+
 def invert_image(image):
     # image = Image.open(file)
-    image = image.convert("RGB")
+    image = image.convert("RGBA")
 
     r, g, b, a = image.split()
     rgb_image = Image.merge('RGB', (r, g, b))
@@ -57,6 +72,7 @@ for file in tqdm(file_list("input/**/*.png")):
     try:
         image = Image.open(file)
 
+        image = remove_white(image)
         image = invert_image(image)
 
         image.save(path.join("output", path.split(file)[1]), "PNG")
