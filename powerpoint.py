@@ -1,24 +1,23 @@
 import json
 import os
-from posixpath import splitext
-from shutil import copy, rmtree
 import subprocess
 import tempfile
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from glob import glob
+from io import BytesIO
 from multiprocessing import Pool, cpu_count
 from os import mkdir, path, rename, rmdir
+from posixpath import splitext
 from re import I
+from shutil import copy, rmtree
 from tempfile import gettempdir
 from threading import Thread
 from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
-import cv2
-import numpy as np
+import aspose.slides as slides
 from alive_progress import alive_bar
-from cv2 import Mat, bitwise_not, imread, imwrite
-from matplotlib import pyplot as plt
-from PIL import Image, ImageOps, ImageFile
+from PIL import Image, ImageFile, ImageOps
+from pptx import opc
 from pptx.api import Presentation  # type: ignore
 from pptx.dml.color import RGBColor
 from pptx.enum.dml import MSO_THEME_COLOR  # type: ignore
@@ -26,15 +25,6 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.parts import image
 from pptx.presentation import Presentation as PPTX
 from pptx.util import Inches
-from pptx import opc
-
-
-# def related_parts(self):
-#     return {
-#         rId: rel.target_part
-#         for rId, rel in self._rels.items()
-#     }
-
 
 # opc.package.Part.related_parts = related_parts
 
@@ -134,55 +124,29 @@ def remove_white(image):
 
 
 def invert_image(image):
-    # image = Image.open(file)
-    image = image.convert("RGBA")
+    # image = Image.open(image_file)
+    image = image.convert("RGB")
 
-    r, g, b, a = image.split()
-    rgb_image = Image.merge('RGB', (r, g, b))
+    inverted_image = ImageOps.invert(image)
+    # r, g, b, a = image.split()
+    # rgb_image = Image.merge('RGB', (r, g, b))
 
-    inverted_image = ImageOps.invert(rgb_image)
+    # inverted_image = ImageOps.invert(rgb_image)
 
-    r2, g2, b2 = inverted_image.split()
+    # r2, g2, b2 = inverted_image.split()
 
-    image = Image.merge('RGBA', (r2, g2, b2, a))
-    return image
+    # image = Image.merge('RGBA', (r2, g2, b2, a))
+    return inverted_image
 
 
 def remove_transparency(image, bg_colour=(255, 255, 255)):
-    alpha = image.convert('RGBA').split()[-1]
-    bg = Image.new("RGBA", image.size, bg_colour + (255,))
-    bg.paste(image, mask=alpha)
-    return bg
-    # trans_mask = image[:, :, 3] == 0
-
-    # # replace areas of transparency with white and not transparent
-    # image[trans_mask] = [255, 255, 255, 255]
-
-    # # new image without alpha channel...
-    # Only process if image has transparency (http://stackoverflow.com/a/1963146)
-    # if image.mode in ('RGBA', 'LA') or (image.mode == 'P' and 'transparency' in image.info):
-    #     print(image.info)
-    #     # Need to convert to RGBA if LA format due to a bug in PIL (http://stackoverflow.com/a/1963146)
-    #     alpha = image.convert('RGBA').split()[-1]
-
-    #     # Create a new background image of our matt color.
-    #     # Must be RGBA because paste requires both images have the same format
-    #     # (http://stackoverflow.com/a/8720632  and  http://stackoverflow.com/a/9459208)
-    #     bg = Image.new("RGBA", image.size, bg_colour + (255))
-    #     bg.paste(image, mask=alpha)
-    #     return bg
-
-    # else:
-    #     pass
-    # return remove_transparency(image.convert("P"))
-    # media = glob(path.join(TEMP_DIR, "extracted", "**/*"))
-
-    # for file in tqdm(media):
-    #     image = remove_white(file)
-    #     image = invert_image(file)
-    #     image.save(file)
-
-    # 5. Replace the new images with the old images in the zip
+    if image.mode in ('RGBA', 'LA') or (image.mode == 'P' and 'transparency' in image.info):
+        alpha = image.convert('RGBA').split()[-1]
+        bg = Image.new("RGBA", image.size, bg_colour + (255,))
+        bg.paste(image, mask=alpha)
+        return bg
+    else:
+        return image
 
 
 def replace_media(folder: str):
@@ -292,7 +256,7 @@ def extract_images(name: str, pptx: PPTX):
     for index, slide in enumerate(pptx.slides):  # type: ignore
         for shape in slide.shapes:
             if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-
+                # Change the background fill of the picture to white
                 # slide_part, rId = shape.part, shape._element.blip_rId
                 # print(slide_part)
                 # image_part = slide_part.related_parts[rId]
@@ -309,12 +273,14 @@ def extract_images(name: str, pptx: PPTX):
 
                 open_image = Image.open(image_path)
 
-                transparent_image = remove_white(open_image)
-                inverted_image = invert_image(transparent_image)
+                open_image.convert("LA")
+
+                inverted_image = invert_image(open_image)
+                transparent_image = remove_white(inverted_image)
 
                 new_image_path = path.join(
                     images_folder_path, f"image{index + 1}.png")
-                inverted_image.save(new_image_path, "PNG")
+                transparent_image.save(new_image_path, "PNG")
 
     return pptx, images_folder_path
 
@@ -410,26 +376,48 @@ def convert_to_zip(file: str):
     return change_extension(file, "zip")
 
 
+def read_all_bytes(file_name):
+    with open(file_name, "rb") as stream:
+        return stream.read()
+
+
 if __name__ == "__main__":
     clear_output()
 
     files = file_list("input/**/*.pptx")
 
     for file in files:
+        name = path.split(path.splitext(file)[0])[1]
+        between_path = path.join("between", f"{name}.pptx")
+        output_path = path.join("output", f"{name}.pptx")
+        create_dir(path.join("images", name))
         with alive_bar(len(files), dual_line=True,  title="Converting powerpoints...") as bar:
+            # with slides.Presentation(file) as presentation:
+            #     for idx, image in enumerate(presentation.images):
+            #         opened_image = Image.open(BytesIO(image.binary_data))
 
+            #         # removed_white_image = remove_white(opened_image)
+            #         inverted_image = invert_image(opened_image)
+
+            #         image_path = path.join(
+            #             "images", name, f"image{idx + 1}.png")
+
+            #         inverted_image.save(image_path, "PNG")
+
+            #         image.replace_image(read_all_bytes(image_path))
+
+            #     presentation.save(
+            #         between_path, slides.export.SaveFormat.PPTX)
             pptx: PPTX = Presentation(file)
 
-            name = path.split(path.splitext(file)[0])[1]
+            # pptx: PPTX = Presentation(between_path)
 
             pptx, images_folder_path = extract_images(name, pptx)
             pptx = invert_colors(pptx)
 
-            new_file_path = path.join("between", name)
+            pptx.save(between_path)
 
-            pptx.save(new_file_path)
-
-            input_zip_file = convert_to_zip(new_file_path)
+            input_zip_file = convert_to_zip(between_path)
 
             output_zip_file = path.join(
                 "output", path.split(input_zip_file)[1])
@@ -446,6 +434,8 @@ if __name__ == "__main__":
                             image_path = path.join(
                                 images_folder_path, image_name)
 
+                            print(
+                                f"Replaced {info.filename} with {image_path}")
                             zip.write(image_path, info.filename)
                         else:
                             zip.writestr(
@@ -459,6 +449,6 @@ if __name__ == "__main__":
     # with Pool() as pool:
     #         for file in pool.imap_unordered(convert_pptx, files):
 
-    file = file_list(path.join("output", "**/*.pptx"))[0]
+    # file = file_list(path.join("output", "**/*.pptx"))[0]
 
-    open_file(file)
+    # open_file(file)
