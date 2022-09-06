@@ -125,18 +125,17 @@ def remove_white(image):
 
 def invert_image(image):
     # image = Image.open(image_file)
-    image = image.convert("RGB")
+    image = image.convert("RGBA")
 
-    inverted_image = ImageOps.invert(image)
-    # r, g, b, a = image.split()
-    # rgb_image = Image.merge('RGB', (r, g, b))
+    r, g, b, a = image.split()
+    rgb_image = Image.merge('RGB', (r, g, b))
 
-    # inverted_image = ImageOps.invert(rgb_image)
+    inverted_image = ImageOps.invert(rgb_image)
 
-    # r2, g2, b2 = inverted_image.split()
+    r2, g2, b2 = inverted_image.split()
 
-    # image = Image.merge('RGBA', (r2, g2, b2, a))
-    return inverted_image
+    image = Image.merge('RGBA', (r2, g2, b2, a))
+    return image
 
 
 def remove_transparency(image, bg_colour=(255, 255, 255)):
@@ -273,14 +272,12 @@ def extract_images(name: str, pptx: PPTX):
 
                 open_image = Image.open(image_path)
 
-                open_image.convert("LA")
-
-                inverted_image = invert_image(open_image)
-                transparent_image = remove_white(inverted_image)
+                transparent_image = remove_white(open_image)
+                inverted_image = invert_image(transparent_image)
 
                 new_image_path = path.join(
                     images_folder_path, f"image{index + 1}.png")
-                transparent_image.save(new_image_path, "PNG")
+                inverted_image.save(new_image_path, "PNG")
 
     return pptx, images_folder_path
 
@@ -333,32 +330,58 @@ def convert_image(file: str):
 
 def convert_pptx(file: str):
 
-    invert_colors(file)
+    name = path.split(path.splitext(file)[0])[1]
+    between_path = path.join("between", f"{name}.pptx")
+    output_path = path.join("output", f"{name}.pptx")
+    create_dir(path.join("images", name))
+    # with slides.Presentation(file) as presentation:
+    #     for idx, image in enumerate(presentation.images):
+    #         opened_image = Image.open(BytesIO(image.binary_data))
 
-    # convert_to_zip(file)
-    # directory = extract_media(file)
+    #         # removed_white_image = remove_white(opened_image)
+    #         inverted_image = invert_image(opened_image)
 
-    # media = file_list(path.join(directory, "**/*.png"))
+    #         image_path = path.join(
+    #             "images", name, f"image{idx + 1}.png")
 
-    # # # with concurrent.futures.ProcessPoolExecutor() as executor:
-    # # #     executor.map(convert_image, media)
-    # for item in media:
-    #     # convert_image(item)
-    #     image = Image.open(item)
+    #         inverted_image.save(image_path, "PNG")
 
-    #     transparent_image = remove_white(image)
-    #     inverted_image = invert_image(transparent_image)
-    #     # image = invert_image(image)
-    #     # image = invert_image(image)
+    #         image.replace_image(read_all_bytes(image_path))
 
-    #     inverted_image.save(item, "PNG")
+    #     presentation.save(
+    #         between_path, slides.export.SaveFormat.PPTX)
+    pptx: PPTX = Presentation(file)
 
-    # folder = path.splitext(path.split(file)[1])[0]
+    # pptx: PPTX = Presentation(between_path)
 
-    # out_zip = replace_media(folder)
-    # pptx_file = convert_to_pptx(out_zip)
+    pptx, images_folder_path = extract_images(name, pptx)
+    pptx = invert_colors(pptx)
 
-    # modify_pptx(pptx_file)
+    pptx.save(between_path)
+
+    input_zip_file = convert_to_zip(between_path)
+
+    output_zip_file = path.join(
+        "output", path.split(input_zip_file)[1])
+
+    copy(input_zip_file, output_zip_file)
+
+    with ZipFile(input_zip_file, "r") as zip_ref:
+        with ZipFile(output_zip_file, "w") as zip:
+            zip.comment = zip_ref.comment
+            for info in zip_ref.infolist():
+                # replace the old images with the new images
+                if("media" in info.filename):
+                    image_name = path.split(info.filename)[1]
+                    image_path = path.join(
+                        images_folder_path, image_name)
+
+                    zip.write(image_path, info.filename)
+                else:
+                    zip.writestr(
+                        info, zip_ref.read(info.filename))
+
+    change_extension(output_zip_file, "pptx")
 
     return file
 
@@ -386,68 +409,12 @@ if __name__ == "__main__":
 
     files = file_list("input/**/*.pptx")
 
-    for file in files:
-        name = path.split(path.splitext(file)[0])[1]
-        between_path = path.join("between", f"{name}.pptx")
-        output_path = path.join("output", f"{name}.pptx")
-        create_dir(path.join("images", name))
-        with alive_bar(len(files), dual_line=True,  title="Converting powerpoints...") as bar:
-            # with slides.Presentation(file) as presentation:
-            #     for idx, image in enumerate(presentation.images):
-            #         opened_image = Image.open(BytesIO(image.binary_data))
-
-            #         # removed_white_image = remove_white(opened_image)
-            #         inverted_image = invert_image(opened_image)
-
-            #         image_path = path.join(
-            #             "images", name, f"image{idx + 1}.png")
-
-            #         inverted_image.save(image_path, "PNG")
-
-            #         image.replace_image(read_all_bytes(image_path))
-
-            #     presentation.save(
-            #         between_path, slides.export.SaveFormat.PPTX)
-            pptx: PPTX = Presentation(file)
-
-            # pptx: PPTX = Presentation(between_path)
-
-            pptx, images_folder_path = extract_images(name, pptx)
-            pptx = invert_colors(pptx)
-
-            pptx.save(between_path)
-
-            input_zip_file = convert_to_zip(between_path)
-
-            output_zip_file = path.join(
-                "output", path.split(input_zip_file)[1])
-
-            copy(input_zip_file, output_zip_file)
-
-            with ZipFile(input_zip_file, "r") as zip_ref:
-                with ZipFile(output_zip_file, "w") as zip:
-                    zip.comment = zip_ref.comment
-                    for info in zip_ref.infolist():
-                        # replace the old images with the new images
-                        if("media" in info.filename):
-                            image_name = path.split(info.filename)[1]
-                            image_path = path.join(
-                                images_folder_path, image_name)
-
-                            print(
-                                f"Replaced {info.filename} with {image_path}")
-                            zip.write(image_path, info.filename)
-                        else:
-                            zip.writestr(
-                                info, zip_ref.read(info.filename))
-
-            change_extension(output_zip_file, "pptx")
-
-            bar.text = f"Converted '{file}'..."
-            bar()
-
-    # with Pool() as pool:
-    #         for file in pool.imap_unordered(convert_pptx, files):
+    with alive_bar(len(files), dual_line=True,  title="Converting powerpoints...") as bar:
+        with Pool() as pool:
+            for file in pool.imap_unordered(convert_pptx, files):
+                bar.text = f"Converted '{file}'..."
+                bar()
+        # for file in files:
 
     # file = file_list(path.join("output", "**/*.pptx"))[0]
 
